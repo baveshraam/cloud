@@ -37,9 +37,11 @@ export function AppointmentForm({ doctorId, slot, onBack, onComplete }) {
       if (data.success) {
         toast.success("Appointment booked successfully!");
         onComplete();
+      } else {
+        toast.error(data.error || "Failed to book appointment");
       }
     }
-  }, [data]);
+  }, [data, onComplete]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
