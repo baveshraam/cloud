@@ -11,28 +11,22 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(uuid())
-  clerkUserId       String    @unique // Clerk's user ID
-  email             String    @unique
-  name              String?
-  imageUrl          String?
-  role              UserRole  @default(UNASSIGNED) // UNASSIGNED, PATIENT, DOCTOR, ADMIN
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  
-  // Patient-specific fields
-  credits           Int       @default(2) // Accumulated credit balance
-  
-  // Doctor-specific fields
-  specialty         String?
-  experience        Int?      // Years of experience
-  credentialUrl     String?   // Document URL
-  description       String?   @db.Text
-  verificationStatus VerificationStatus?  @default(PENDING)
-  
-  // Relations
-  patientAppointments Appointment[] @relation("PatientAppointments")
-  doctorAppointments  Appointment[] @relation("DoctorAppointments")
+  id                 String    @id @default(uuid())
+  clerkUserId        String    @unique // Clerk's user ID
+  email              String    @unique
+  name               String?
+  imageUrl           String?
+  role               UserRole  @default(UNASSIGNED) // UNASSIGNED, PATIENT, DOCTOR, ADMIN
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  credits            Int       @default(0)
+  specialty          String?
+  experience         Int?
+  credentialUrl      String?
+  description        String?   @db.Text
+  verificationStatus VerificationStatus? @default(PENDING)
+  patientAppointments Appointment[]       @relation("PatientAppointments")
+  doctorAppointments  Appointment[]       @relation("DoctorAppointments")
   availabilities      Availability[]
   transactions        CreditTransaction[]
   payouts             Payout[]
@@ -52,14 +46,13 @@ enum VerificationStatus {
 }
 
 model Availability {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   doctorId  String
-  doctor    User     @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  startTime DateTime
-  endTime   DateTime
+  doctor    User    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  startTime String
+  endTime   String
   status    SlotStatus @default(AVAILABLE)
-  
-  @@index([doctorId, startTime])
+  @@index([doctorId])
 }
 
 enum SlotStatus {
@@ -69,24 +62,20 @@ enum SlotStatus {
 }
 
 model Appointment {
-  id                String   @id @default(uuid())
-  patientId         String
-  patient           User     @relation("PatientAppointments", fields: [patientId], references: [id])
-  doctorId          String
-  doctor            User     @relation("DoctorAppointments", fields: [doctorId], references: [id])
-  startTime         DateTime // Start time of appointment
-  endTime           DateTime // End time of appointment
-  status            AppointmentStatus @default(SCHEDULED)
-  notes             String?  @db.Text
-  patientDescription String? @db.Text
-    
-  // Video session fields
-  videoSessionId    String?  // Vonage Video API Session ID
-  videoSessionToken String?  // Optional: Can store tokens if needed
-  
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
+  id                 String   @id @default(uuid())
+  patientId          String
+  patient            User     @relation("PatientAppointments", fields: [patientId], references: [id])
+  doctorId           String
+  doctor             User     @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  startTime          DateTime
+  endTime            DateTime
+  status             AppointmentStatus @default(SCHEDULED)
+  notes              String?  @db.Text
+  patientDescription String?  @db.Text
+  videoSessionId     String?
+  videoSessionToken  String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
   @@index([status, startTime])
   @@index([doctorId, startTime])
 }
@@ -98,36 +87,38 @@ enum AppointmentStatus {
 }
 
 model CreditTransaction {
-  id                String   @id @default(uuid())
-  userId            String
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  amount            Int      // Positive for additions, negative for usage
-  type              TransactionType
-  packageId         String?  // Reference to which package was purchased
-  createdAt         DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int
+  type      TransactionType
+  packageId String?
+  createdAt DateTime @default(now())
 }
 
+// --- THIS IS THE IMPORTANT CHANGE ---
+// Ensure INITIAL_CREDITS is included in this list
 enum TransactionType {
-  CREDIT_PURCHASE     // Credits purchased through Clerk Billing
-  APPOINTMENT_DEDUCTION // Credit used for appointment
-  ADMIN_ADJUSTMENT      // Manual adjustment by admin
+  CREDIT_PURCHASE
+  APPOINTMENT_DEDUCTION
+  ADMIN_ADJUSTMENT
+  INITIAL_CREDITS
 }
 
 model Payout {
-  id              String        @id @default(uuid())
-  doctorId        String
-  doctor          User          @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  amount          Float         // Total payout amount in USD
-  credits         Int           // Number of credits being paid out
-  platformFee     Float         // Platform fee deducted (2 USD per credit)
-  netAmount       Float         // Amount doctor receives (8 USD per credit)
-  paypalEmail     String        // Doctor's PayPal email for payout
-  status          PayoutStatus  @default(PROCESSING)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  processedAt     DateTime?     // When admin marked it as processed
-  processedBy     String?       // Admin who processed it
-
+  id            String       @id @default(uuid())
+  doctorId      String
+  doctor        User         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  amount        Float
+  credits       Int
+  platformFee   Float
+  netAmount     Float
+  paypalEmail   String
+  status        PayoutStatus @default(PROCESSING)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  processedAt   DateTime?
+  processedBy   String?
   @@index([status, createdAt])
   @@index([doctorId, status])
 }
