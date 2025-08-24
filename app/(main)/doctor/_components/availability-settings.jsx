@@ -13,62 +13,51 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Clock, Plus, Loader2, AlertCircle } from "lucide-react";
-import { format } from "date-fns";
 import { setAvailabilitySlots } from "@/actions/doctor";
 import useFetch from "@/hooks/use-fetch";
 import { toast } from "sonner";
 
 export function AvailabilitySettings({ slots }) {
   const [showForm, setShowForm] = useState(false);
-
-  // Custom hook for server action
   const { loading, fn: submitSlots, data } = useFetch(setAvailabilitySlots);
 
-  // React Hook Form
+  // --- REVISED LOGIC ---
+  // Set default form values from the first existing slot, if available.
+  // The slot times are already in "HH:mm" format in the new schema.
   const {
     register,
     handleSubmit,
     formState: { errors },
+    setValue,
   } = useForm({
     defaultValues: {
-      startTime: "",
-      endTime: "",
+      startTime: slots[0]?.startTime || "09:00",
+      endTime: slots[0]?.endTime || "17:00",
     },
   });
 
-  function createLocalDateFromTime(timeStr) {
-    const [hours, minutes] = timeStr.split(":").map(Number);
-    const now = new Date();
-    const date = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      hours,
-      minutes
-    );
-    return date;
-  }
+  // When the form is shown, populate it with existing data
+  useEffect(() => {
+    if (showForm && slots.length > 0) {
+      setValue("startTime", slots[0].startTime);
+      setValue("endTime", slots[0].endTime);
+    }
+  }, [showForm, slots, setValue]);
+
 
   // Handle slot submission
   const onSubmit = async (data) => {
     if (loading) return;
 
-    const formData = new FormData();
-
-    const today = new Date().toISOString().split("T")[0];
-
-    // Create date objects
-    const startDate = createLocalDateFromTime(data.startTime);
-    const endDate = createLocalDateFromTime(data.endTime);
-
-    if (startDate >= endDate) {
+    // The start and end times are already strings like "09:30"
+    if (data.startTime >= data.endTime) {
       toast.error("End time must be after start time");
       return;
     }
 
-    // Add to form data
-    formData.append("startTime", startDate.toISOString());
-    formData.append("endTime", endDate.toISOString());
+    const formData = new FormData();
+    formData.append("startTime", data.startTime);
+    formData.append("endTime", data.endTime);
 
     await submitSlots(formData);
   };
@@ -80,14 +69,16 @@ export function AvailabilitySettings({ slots }) {
     }
   }, [data]);
 
-  // Format time string for display
-  const formatTimeString = (dateString) => {
-    try {
-      return format(new Date(dateString), "h:mm a");
-    } catch (e) {
-      return "Invalid time";
-    }
+  // Helper to format "HH:mm" string to "h:mm a" (e.g., "09:00" -> "9:00 AM")
+  const formatTimeString = (timeStr) => {
+    if (!timeStr) return "N/A";
+    const [hours, minutes] = timeStr.split(':');
+    const date = new Date();
+    date.setHours(parseInt(hours, 10));
+    date.setMinutes(parseInt(minutes, 10));
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
+
 
   return (
     <Card className="border-emerald-900/20">
@@ -101,18 +92,15 @@ export function AvailabilitySettings({ slots }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {/* Current Availability Display */}
         {!showForm ? (
           <>
             <div className="mb-6">
               <h3 className="text-lg font-medium text-white mb-3">
                 Current Availability
               </h3>
-
               {slots.length === 0 ? (
                 <p className="text-muted-foreground">
-                  You haven&apos;t set any availability slots yet. Add your
-                  availability to start accepting appointments.
+                  You haven&apos;t set any availability slots yet.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -129,8 +117,8 @@ export function AvailabilitySettings({ slots }) {
                           {formatTimeString(slot.startTime)} -{" "}
                           {formatTimeString(slot.endTime)}
                         </p>
-                        <p className="text-xs text-muted-foreground">
-                          {slot.appointment ? "Booked" : "Available"}
+                         <p className="text-xs text-muted-foreground">
+                          Applies to all available days
                         </p>
                       </div>
                     </div>
@@ -138,13 +126,12 @@ export function AvailabilitySettings({ slots }) {
                 </div>
               )}
             </div>
-
             <Button
               onClick={() => setShowForm(true)}
               className="w-full bg-emerald-600 hover:bg-emerald-700"
             >
               <Plus className="h-4 w-4 mr-2" />
-              Set Availability Time
+              {slots.length > 0 ? "Update Availability" : "Set Availability"}
             </Button>
           </>
         ) : (
@@ -155,7 +142,6 @@ export function AvailabilitySettings({ slots }) {
             <h3 className="text-lg font-medium text-white mb-2">
               Set Daily Availability
             </h3>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="startTime">Start Time</Label>
@@ -173,7 +159,6 @@ export function AvailabilitySettings({ slots }) {
                   </p>
                 )}
               </div>
-
               <div className="space-y-2">
                 <Label htmlFor="endTime">End Time</Label>
                 <Input
@@ -189,7 +174,6 @@ export function AvailabilitySettings({ slots }) {
                 )}
               </div>
             </div>
-
             <div className="flex justify-end space-x-3 pt-2">
               <Button
                 type="button"
@@ -217,7 +201,6 @@ export function AvailabilitySettings({ slots }) {
             </div>
           </form>
         )}
-
         <div className="mt-6 p-4 bg-muted/10 border border-emerald-900/10 rounded-md">
           <h4 className="font-medium text-white mb-2 flex items-center">
             <AlertCircle className="h-4 w-4 mr-2 text-emerald-400" />
@@ -226,8 +209,7 @@ export function AvailabilitySettings({ slots }) {
           <p className="text-muted-foreground text-sm">
             Setting your daily availability allows patients to book appointments
             during those hours. The same availability applies to all days. You
-            can update your availability at any time, but existing booked
-            appointments will not be affected.
+            can update your availability at any time.
           </p>
         </div>
       </CardContent>
