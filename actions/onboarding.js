@@ -46,13 +46,23 @@ export async function setUserRole(formData) {
     // For doctor role - need additional information
     if (role === "DOCTOR") {
       const specialty = formData.get("specialty");
-      const experience = parseInt(formData.get("experience"), 10);
+      const experienceStr = formData.get("experience");
       const credentialUrl = formData.get("credentialUrl");
       const description = formData.get("description");
 
-      // Validate inputs
-      if (!specialty || !experience || !credentialUrl || !description) {
+      // --- REVISED VALIDATION LOGIC ---
+      // 1. Check if any of the text fields are empty
+      if (!specialty || !experienceStr || !credentialUrl || !description) {
         throw new Error("All fields are required");
+      }
+
+      // 2. Parse the experience string into a number
+      const experience = parseInt(experienceStr, 10);
+
+      // 3. Specifically check if the parsed experience is not a valid number
+      //    This prevents `NaN` from being sent to the database, which was causing the error.
+      if (isNaN(experience) || experience < 0) {
+        throw new Error("Years of experience must be a valid positive number.");
       }
 
       await db.user.update({
@@ -62,7 +72,7 @@ export async function setUserRole(formData) {
         data: {
           role: "DOCTOR",
           specialty,
-          experience,
+          experience, // Now we are sure this is a valid number
           credentialUrl,
           description,
           verificationStatus: "PENDING",
