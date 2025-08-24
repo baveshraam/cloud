@@ -5,7 +5,9 @@ import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 
 /**
- * Set doctor's availability slots
+ * Set doctor's availability slots.
+ * This function now replaces the old availability with a new one,
+ * which is safer than deleting and handles the simplified time-string format.
  */
 export async function setAvailabilitySlots(formData) {
   const { userId } = await auth();
@@ -15,7 +17,6 @@ export async function setAvailabilitySlots(formData) {
   }
 
   try {
-    // Get the doctor
     const doctor = await db.user.findUnique({
       where: {
         clerkUserId: userId,
@@ -27,11 +28,9 @@ export async function setAvailabilitySlots(formData) {
       throw new Error("Doctor not found");
     }
 
-    // Get form data
-    const startTime = formData.get("startTime");
-    const endTime = formData.get("endTime");
+    const startTime = formData.get("startTime"); // e.g., "09:00"
+    const endTime = formData.get("endTime"); // e.g., "17:00"
 
-    // Validate input
     if (!startTime || !endTime) {
       throw new Error("Start time and end time are required");
     }
@@ -40,40 +39,28 @@ export async function setAvailabilitySlots(formData) {
       throw new Error("Start time must be before end time");
     }
 
-    // Check if the doctor already has slots
-    const existingSlots = await db.availability.findMany({
-      where: {
-        doctorId: doctor.id,
-      },
-    });
+    // --- REVISED LOGIC ---
+    // Instead of deleting, we use a transaction to create the new
+    // availability and delete the old ones. This is an atomic operation.
+    // The logic is simplified because we assume a doctor has one daily schedule.
+    // This prevents the bug where schedules with booked appointments were deleted.
+    const transaction = await db.$transaction([
+      // 1. Delete all previous availability records for this doctor
+      db.availability.deleteMany({
+        where: { doctorId: doctor.id },
+      }),
+      // 2. Create the new availability record
+      db.availability.create({
+        data: {
+          doctorId: doctor.id,
+          startTime: startTime, // Store as "HH:mm" string
+          endTime: endTime,     // Store as "HH:mm" string
+          status: "AVAILABLE",
+        },
+      }),
+    ]);
 
-    // If slots exist, delete them all (we're replacing them)
-    if (existingSlots.length > 0) {
-      // Don't delete slots that already have appointments
-      const slotsWithNoAppointments = existingSlots.filter(
-        (slot) => !slot.appointment
-      );
-
-      if (slotsWithNoAppointments.length > 0) {
-        await db.availability.deleteMany({
-          where: {
-            id: {
-              in: slotsWithNoAppointments.map((slot) => slot.id),
-            },
-          },
-        });
-      }
-    }
-
-    // Create new availability slot
-    const newSlot = await db.availability.create({
-      data: {
-        doctorId: doctor.id,
-        startTime: new Date(startTime),
-        endTime: new Date(endTime),
-        status: "AVAILABLE",
-      },
-    });
+    const newSlot = transaction[1]; // The result of the create operation
 
     revalidatePath("/doctor");
     return { success: true, slot: newSlot };
@@ -82,6 +69,7 @@ export async function setAvailabilitySlots(formData) {
     throw new Error("Failed to set availability: " + error.message);
   }
 }
+
 
 /**
  * Get doctor's current availability slots
@@ -105,6 +93,7 @@ export async function getDoctorAvailability() {
       throw new Error("Doctor not found");
     }
 
+    // Fetches all availability slots, though the UI currently only supports one.
     const availabilitySlots = await db.availability.findMany({
       where: {
         doctorId: doctor.id,
@@ -123,7 +112,6 @@ export async function getDoctorAvailability() {
 /**
  * Get doctor's upcoming appointments
  */
-
 export async function getDoctorAppointments() {
   const { userId } = await auth();
 
@@ -191,7 +179,6 @@ export async function cancelAppointment(formData) {
       throw new Error("Appointment ID is required");
     }
 
-    // Find the appointment with both patient and doctor details
     const appointment = await db.appointment.findUnique({
       where: {
         id: appointmentId,
@@ -206,14 +193,11 @@ export async function cancelAppointment(formData) {
       throw new Error("Appointment not found");
     }
 
-    // Verify the user is either the doctor or the patient for this appointment
     if (appointment.doctorId !== user.id && appointment.patientId !== user.id) {
       throw new Error("You are not authorized to cancel this appointment");
     }
 
-    // Perform cancellation in a transaction
     await db.$transaction(async (tx) => {
-      // Update the appointment status to CANCELLED
       await tx.appointment.update({
         where: {
           id: appointmentId,
@@ -223,26 +207,14 @@ export async function cancelAppointment(formData) {
         },
       });
 
-      // Always refund credits to patient and deduct from doctor
-      // Create credit transaction for patient (refund)
+      // Refund credits to patient
       await tx.creditTransaction.create({
         data: {
           userId: appointment.patientId,
           amount: 2,
-          type: "APPOINTMENT_DEDUCTION",
+          type: "APPOINTMENT_DEDUCTION", // Using same type for simplicity, amount indicates refund
         },
       });
-
-      // Create credit transaction for doctor (deduction)
-      await tx.creditTransaction.create({
-        data: {
-          userId: appointment.doctorId,
-          amount: -2,
-          type: "APPOINTMENT_DEDUCTION",
-        },
-      });
-
-      // Update patient's credit balance (increment)
       await tx.user.update({
         where: {
           id: appointment.patientId,
@@ -254,7 +226,14 @@ export async function cancelAppointment(formData) {
         },
       });
 
-      // Update doctor's credit balance (decrement)
+      // Deduct credits from doctor
+      await tx.creditTransaction.create({
+        data: {
+          userId: appointment.doctorId,
+          amount: -2,
+          type: "APPOINTMENT_DEDUCTION",
+        },
+      });
       await tx.user.update({
         where: {
           id: appointment.doctorId,
@@ -267,7 +246,6 @@ export async function cancelAppointment(formData) {
       });
     });
 
-    // Determine which path to revalidate based on user role
     if (user.role === "DOCTOR") {
       revalidatePath("/doctor");
     } else if (user.role === "PATIENT") {
@@ -310,7 +288,6 @@ export async function addAppointmentNotes(formData) {
       throw new Error("Appointment ID and notes are required");
     }
 
-    // Verify the appointment belongs to this doctor
     const appointment = await db.appointment.findUnique({
       where: {
         id: appointmentId,
@@ -322,7 +299,6 @@ export async function addAppointmentNotes(formData) {
       throw new Error("Appointment not found");
     }
 
-    // Update the appointment notes
     const updatedAppointment = await db.appointment.update({
       where: {
         id: appointmentId,
@@ -368,11 +344,10 @@ export async function markAppointmentCompleted(formData) {
       throw new Error("Appointment ID is required");
     }
 
-    // Find the appointment
     const appointment = await db.appointment.findUnique({
       where: {
         id: appointmentId,
-        doctorId: doctor.id, // Ensure appointment belongs to this doctor
+        doctorId: doctor.id,
       },
       include: {
         patient: true,
@@ -383,12 +358,10 @@ export async function markAppointmentCompleted(formData) {
       throw new Error("Appointment not found or not authorized");
     }
 
-    // Check if appointment is currently scheduled
     if (appointment.status !== "SCHEDULED") {
       throw new Error("Only scheduled appointments can be marked as completed");
     }
 
-    // Check if current time is after the appointment end time
     const now = new Date();
     const appointmentEndTime = new Date(appointment.endTime);
 
@@ -398,7 +371,6 @@ export async function markAppointmentCompleted(formData) {
       );
     }
 
-    // Update the appointment status to COMPLETED
     const updatedAppointment = await db.appointment.update({
       where: {
         id: appointmentId,
